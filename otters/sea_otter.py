@@ -1,10 +1,17 @@
 import parso
+from parso.tree import NodeOrLeaf
 import jedi
 
 grammar = parso.load_grammar(version='3.6')
 
 
-def get_leaves_of_node(n):
+def get_leaves_of_node(n: NodeOrLeaf):
+    """
+    get all leaves under a certain node.
+
+    :param n: node
+    :return: list of leaves
+    """
     next_sibling = n.get_next_sibling()
     end_leaf = None if next_sibling is None else next_sibling.get_first_leaf()
     leaf = n.get_first_leaf()
@@ -15,10 +22,18 @@ def get_leaves_of_node(n):
     return ls
 
 
-def code_to_graph(code: str):
+def simple_dependency(code: str):
+    """
+    parse code, extract variables then match their dependencies.
+
+    :param code: string
+    :return: {var_name: list of name}
+    """
     module = grammar.parse(code)
     graph = dict()
     for simple_stmt in module.children:
+        if simple_stmt.type != 'simple_stmt':
+            continue
         leaves = get_leaves_of_node(simple_stmt)
         graph[leaves[0].value] = leaves[2:]
     return graph
@@ -27,10 +42,14 @@ def code_to_graph(code: str):
 def incremental_computation(old_code: str, new_code: str):
     incremental_stmts = list()
     new_module = grammar.parse(new_code)
-    old_graph = code_to_graph(old_code)
+    old_graph = simple_dependency(old_code)
     recalculation_usage = dict()
     script = jedi.Script(new_code)
     for simple_stmt in new_module.children:
+
+        if simple_stmt.type != 'simple_stmt':
+            continue
+
         leaves = get_leaves_of_node(simple_stmt)
         var = leaves[0]
 
