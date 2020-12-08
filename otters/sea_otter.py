@@ -1,8 +1,17 @@
 import parso
 from parso.tree import NodeOrLeaf
-import jedi
+from parso.python.tree import PythonNode
+from jedi.api import classes, helpers
+from jedi.api.project import Project
+from jedi.inference import InferenceState
+from jedi.inference.references import find_references
+from jedi.inference.context import ModuleContext
+from jedi.inference.value.module import ModuleValue
+from typing import List
 
 grammar = parso.load_grammar(version='3.6')
+project = Project(path='')
+inference_state = InferenceState(project)
 
 
 def get_leaves_of_node(n: NodeOrLeaf):
@@ -31,35 +40,44 @@ def simple_dependency(code: str):
     """
     module = grammar.parse(code)
     graph = dict()
-    for simple_stmt in module.children:
-        if simple_stmt.type != 'simple_stmt':
+    for stmt in module.children:
+        if stmt.type != 'simple_stmt':
             continue
-        leaves = get_leaves_of_node(simple_stmt)
+        leaves = get_leaves_of_node(stmt)
         graph[leaves[0].value] = leaves[2:]
     return graph
 
 
-def incremental_computation(old_code: str, new_code: str):
+def get_usage(context: ModuleContext, node: NodeOrLeaf, state: InferenceState):
+    names = find_references(context, node, True)
+
+    definitions = [classes.Name(state, n) for n in names]
+    definitions = [d for d in definitions if not d.in_builtin_module()]
+    return helpers.sorted_definitions(definitions)
+
+
+def incremental_computation(old_code: str, new_code: str) -> List[PythonNode]:
     incremental_stmts = list()
     new_module = grammar.parse(new_code)
     old_graph = simple_dependency(old_code)
     recalculation_usage = dict()
-    script = jedi.Script(new_code)
-    for simple_stmt in new_module.children:
+    code_lines = parso.split_lines(new_code, keepends=True)
+    module_context = ModuleValue(inference_state, new_module, code_lines).as_context()
+    for stmt in new_module.children:
 
-        if simple_stmt.type != 'simple_stmt':
+        if stmt.type != 'simple_stmt':
             continue
 
-        leaves = get_leaves_of_node(simple_stmt)
-        var = leaves[0]
+        leaves = get_leaves_of_node(stmt)
+        leaf = leaves[0]
 
         need_recalculate = False
-        if var.value in old_graph:
+        if leaf.value in old_graph:
             deps = leaves[2:]
-            if len(deps) != len(old_graph[var.value]):
+            if len(deps) != len(old_graph[leaf.value]):
                 need_recalculate = True
             for i in range(len(deps)):
-                if deps[i].value != old_graph[var.value][i].value or deps[i].type != old_graph[var.value][i].type:
+                if deps[i].value != old_graph[leaf.value][i].value or deps[i].type != old_graph[leaf.value][i].type:
                     need_recalculate = True
                     break
                 if deps[i].type == 'name' and (deps[i].line, deps[i].column) in recalculation_usage:
@@ -70,11 +88,11 @@ def incremental_computation(old_code: str, new_code: str):
             need_recalculate = True
 
         if need_recalculate:
-            rs = script.get_references(line=var.line, column=var.column, scope='file')
+            rs = get_usage(module_context, leaf, inference_state)
             if len(rs) > 1:
                 for r in rs[1:]:
                     line, column = r.line, r.column
-                    recalculation_usage[(line, column)] = var
+                    recalculation_usage[(line, column)] = leaf
 
-            incremental_stmts.append(simple_stmt)
+            incremental_stmts.append(stmt)
     return incremental_stmts

@@ -19,4 +19,4 @@ B=GET('AAPL.OQ|RIC')
 
 if __name__ == '__main__':
     s = jedi.Script(code2)
-    s.get_references(line=1, column=0)
+    s.get_references(line=1, column=0, scope='file')
