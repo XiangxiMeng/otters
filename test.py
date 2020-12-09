@@ -1,22 +1,27 @@
-import jedi
+from otters.sea_otter import incremental_computation, parallel_computation
 
-code = """A = GET_SERIES('299013764')
-B = LOG_CHANGE(
-    A
-)[1:2]
+old_code = """stock = 'aapl'
+A = GET('299013764','FIXINGS')
+B = GET(
+    stock
+    )
+C = func(A,B)
+D = new_func(A)
+E = a_func(B,D)
 """
 
-code2 = """A = GET_SERIES('299013764')
-B = LOG_CHANGE(A)
-C = GET_SERIES('299013764')
-"""
-
-old_code = """A = GET('299013764','FIXINGS')
-"""
 new_code = """A = GET('299013764','FIXINGS')
-B=GET('AAPL.OQ|RIC')
+stock='t'
+B=GET(stock)
+D = new_func(A)
+C = func(A,D)
+"""
+
+code = """A = GET('aapl')
+B = GET('spx')
+pa = func(A)
+pb = func(B)
 """
 
 if __name__ == '__main__':
-    s = jedi.Script(code2)
-    s.get_references(line=1, column=0, scope='file')
+    parallel_computation(code)

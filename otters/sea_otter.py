@@ -1,5 +1,5 @@
 import parso
-from parso.tree import NodeOrLeaf
+from parso.tree import NodeOrLeaf, Leaf
 from parso.python.tree import PythonNode
 from jedi.api import classes, helpers
 from jedi.api.project import Project
@@ -14,7 +14,7 @@ project = Project(path='')
 inference_state = InferenceState(project)
 
 
-def get_leaves_of_node(n: NodeOrLeaf):
+def get_leaves_of_node(n: NodeOrLeaf) -> List[Leaf]:
     """
     get all leaves under a certain node.
 
@@ -48,7 +48,7 @@ def simple_dependency(code: str):
     return graph
 
 
-def get_usage(context: ModuleContext, node: NodeOrLeaf, state: InferenceState):
+def get_usage(context: ModuleContext, node: NodeOrLeaf, state: InferenceState) -> List[classes.Name]:
     names = find_references(context, node, True)
 
     definitions = [classes.Name(state, n) for n in names]
@@ -56,7 +56,20 @@ def get_usage(context: ModuleContext, node: NodeOrLeaf, state: InferenceState):
     return helpers.sorted_definitions(definitions)
 
 
-def incremental_computation(old_code: str, new_code: str) -> List[PythonNode]:
+def get_codes(stmts: List[PythonNode]) -> str:
+    code = ''
+    for stmt in stmts:
+        code += stmt.get_code()
+    return code
+
+
+def incremental_computation(old_code: str, new_code: str) -> List[str]:
+    """
+
+    :param old_code:
+    :param new_code:
+    :return:
+    """
     incremental_stmts = list()
     new_module = grammar.parse(new_code)
     old_graph = simple_dependency(old_code)
@@ -95,4 +108,51 @@ def incremental_computation(old_code: str, new_code: str) -> List[PythonNode]:
                     recalculation_usage[(line, column)] = leaf
 
             incremental_stmts.append(stmt)
-    return incremental_stmts
+    code = get_codes(incremental_stmts)
+    return code
+
+
+def parallel_computation(code: str) -> List[str]:
+    """
+
+    :param code:
+    :return:
+    """
+    module = grammar.parse(code)
+    code_lines = parso.split_lines(code, keepends=True)
+    module_context = ModuleValue(inference_state, module, code_lines).as_context()
+    stmts: List[PythonNode] = list(filter(lambda x: x.type == 'simple_stmt', module.children))
+    new_stmts = []
+    stmts_order = []
+    stmts_group_index = []
+    group_count = 0
+    group_index = 0
+    for i in range(len(stmts)):
+        stmt = stmts[i]
+        try:
+            index = new_stmts.index(stmt)
+            group_index = stmts_group_index[index]
+        except ValueError:
+            new_stmts.append(stmt)
+            stmts_order.append(stmt.start_pos[0])
+            group_index = group_count
+            stmts_group_index.append(group_index)
+            group_count += 1
+        finally:
+            leaves = get_leaves_of_node(stmt)
+            name_node = leaves[0]
+            rs = get_usage(module_context, name_node, inference_state)
+            if len(rs) > 1:
+                for r in rs[1:]:
+                    r: Leaf = module.get_leaf_for_position((r.line, r.column))
+                    while r.type != 'simple_stmt':
+                        r = r.parent
+                    new_stmts.append(r)
+                    stmts_order.append(r.start_pos[0])
+                    stmts_group_index.append(group_index)
+    zipped_stmts = list(zip(new_stmts, stmts_order, stmts_group_index))
+    grouped_stmts = [[i[0:2] for i in zipped_stmts if i[2] == g] for g in range(group_count)]
+    for i in range(group_count):
+        grouped_stmts[i] = list(map(lambda x: x[0], sorted(grouped_stmts[i], key=lambda x: x[1])))
+    codes = [get_codes(stmt) for stmt in grouped_stmts]
+    return codes
